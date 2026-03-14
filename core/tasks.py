@@ -1,14 +1,12 @@
-from datetime import datetime
-from email import policy
-from email.parser import BytesParser
-
 from celery import shared_task
 from django.http import JsonResponse
 from django.utils import timezone
 
-from .models import UploadedSample, AnalysisResult
 from django.shortcuts import get_object_or_404
-from .models import UploadedSample
+
+from analysis.get_headers import get_email_headers
+
+from .models import AnalysisResult, UploadedSample
 
 
 def sample_status(request, sample_id: int):
@@ -43,13 +41,11 @@ def analyze_uploaded_sample(sample_id: int) -> None:
 
     try:
         with sample.file.open("rb") as f:
-            msg = BytesParser(policy=policy.default).parse(f)
+            headers = get_email_headers(f)
 
-        headers = dict(msg.items())
-
-        subject = msg.get("Subject", "")
-        sender = msg.get("From", "")
-        recipient = msg.get("To", "")
+        subject = headers.get("Subject", "")
+        sender = headers.get("From", "")
+        recipient = headers.get("To", "")
 
         summary = (
             f"Parsed email successfully. "
