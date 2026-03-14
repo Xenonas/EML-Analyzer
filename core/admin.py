@@ -14,8 +14,28 @@ class UploadedSampleAdmin(admin.ModelAdmin):
 
 @admin.register(AnalysisResult)
 class AnalysisResultAdmin(admin.ModelAdmin):
+codex/find-current-header-calculation-method-kvs4vw
+    list_display = (
+        "id",
+        "sample",
+        "header_subject",
+        "header_from",
+        "verdict",
+        "completed_at",
+    )
+    list_filter = ("verdict", "completed_at")
+    search_fields = (
+        "sample__original_name",
+        "sample__sha256",
+        "header_subject",
+        "header_from",
+        "header_to",
+        "summary",
+    )
+=======
     list_display = ("id", "sample", "verdict", "completed_at")
     list_filter = ("verdict", "completed_at")
     search_fields = ("sample__original_name", "sample__sha256", "summary")
+main
     readonly_fields = ("completed_at",)
     ordering = ("-completed_at",)
