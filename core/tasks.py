@@ -1,0 +1,89 @@
+from datetime import datetime
+from email import policy
+from email.parser import BytesParser
+
+from celery import shared_task
+from django.http import JsonResponse
+from django.utils import timezone
+
+from .models import UploadedSample, AnalysisResult
+from django.shortcuts import get_object_or_404
+from .models import UploadedSample
+
+
+def sample_status(request, sample_id: int):
+    sample = get_object_or_404(UploadedSample, id=sample_id)
+
+    data = {
+        "id": sample.id,
+        "original_name": sample.original_name,
+        "sha256": sample.sha256,
+        "status": sample.status,
+        "created_at": sample.created_at.isoformat(),
+    }
+
+    if hasattr(sample, "analysisresult"):
+        result = sample.analysisresult
+        data["analysis"] = {
+            "headers": result.headers,
+            "summary": result.summary,
+            "verdict": result.verdict,
+            "completed_at": result.completed_at.isoformat() if result.completed_at else None,
+        }
+    else:
+        data["analysis"] = None
+
+    return JsonResponse(data)
+
+@shared_task
+def analyze_uploaded_sample(sample_id: int) -> None:
+    sample = UploadedSample.objects.get(id=sample_id)
+    sample.status = "processing"
+    sample.save(update_fields=["status"])
+
+    try:
+        with sample.file.open("rb") as f:
+            msg = BytesParser(policy=policy.default).parse(f)
+
+        headers = dict(msg.items())
+
+        subject = msg.get("Subject", "")
+        sender = msg.get("From", "")
+        recipient = msg.get("To", "")
+
+        summary = (
+            f"Parsed email successfully. "
+            f"From: {sender or 'N/A'} | "
+            f"To: {recipient or 'N/A'} | "
+            f"Subject: {subject or 'N/A'}"
+        )
+
+        verdict = "parsed"
+
+        AnalysisResult.objects.update_or_create(
+            sample=sample,
+            defaults={
+                "headers": headers,
+                "summary": summary,
+                "verdict": verdict,
+                "completed_at": timezone.now(),
+            },
+        )
+
+        sample.status = "done"
+        sample.save(update_fields=["status"])
+
+    except Exception as e:
+        sample.status = "failed"
+        sample.save(update_fields=["status"])
+
+        AnalysisResult.objects.update_or_create(
+            sample=sample,
+            defaults={
+                "summary": f"Analysis failed: {str(e)}",
+                "verdict": "error",
+                "completed_at": timezone.now(),
+            },
+        )
+
+        raise
