@@ -1,14 +1,12 @@
-from datetime import datetime
-from email import policy
-from email.parser import BytesParser
-
 from celery import shared_task
 from django.http import JsonResponse
 from django.utils import timezone
 
-from .models import UploadedSample, AnalysisResult
 from django.shortcuts import get_object_or_404
-from .models import UploadedSample
+
+from analysis.get_headers import get_email_headers
+
+from .models import AnalysisResult, UploadedSample
 
 
 def sample_status(request, sample_id: int):
@@ -25,7 +23,11 @@ def sample_status(request, sample_id: int):
     if hasattr(sample, "analysisresult"):
         result = sample.analysisresult
         data["analysis"] = {
-            "headers": result.headers,
+            "subject": result.header_subject,
+            "from": result.header_from,
+            "to": result.header_to,
+            "date": result.header_date,
+            "message_id": result.header_message_id,
             "summary": result.summary,
             "verdict": result.verdict,
             "completed_at": result.completed_at.isoformat() if result.completed_at else None,
@@ -43,13 +45,11 @@ def analyze_uploaded_sample(sample_id: int) -> None:
 
     try:
         with sample.file.open("rb") as f:
-            msg = BytesParser(policy=policy.default).parse(f)
+            headers = get_email_headers(f)
 
-        headers = dict(msg.items())
-
-        subject = msg.get("Subject", "")
-        sender = msg.get("From", "")
-        recipient = msg.get("To", "")
+        subject = headers.get("Subject", "")
+        sender = headers.get("From", "")
+        recipient = headers.get("To", "")
 
         summary = (
             f"Parsed email successfully. "
@@ -63,7 +63,11 @@ def analyze_uploaded_sample(sample_id: int) -> None:
         AnalysisResult.objects.update_or_create(
             sample=sample,
             defaults={
-                "headers": headers,
+                "header_subject": subject,
+                "header_from": sender,
+                "header_to": recipient,
+                "header_date": headers.get("Date", ""),
+                "header_message_id": headers.get("Message-ID", ""),
                 "summary": summary,
                 "verdict": verdict,
                 "completed_at": timezone.now(),

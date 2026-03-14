@@ -4,13 +4,11 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from .serializers import UploadedFileSerializer
-from analysis.get_headers import get_email_headers
 from analysis.utils import get_sha256
 
 import hashlib
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
-from .models import UploadedSample
 from .tasks import analyze_uploaded_sample
 
 from django.shortcuts import get_object_or_404
@@ -32,7 +30,11 @@ def sample_status(request, sample_id: int):
     if hasattr(sample, "analysisresult"):
         result = sample.analysisresult
         data["analysis"] = {
-            "headers": result.headers,
+            "subject": result.header_subject,
+            "from": result.header_from,
+            "to": result.header_to,
+            "date": result.header_date,
+            "message_id": result.header_message_id,
             "summary": result.summary,
             "verdict": result.verdict,
             "completed_at": result.completed_at.isoformat() if result.completed_at else None,

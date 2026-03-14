@@ -1,20 +1,16 @@
-import email
+from email import policy
+from email.parser import BytesParser
 
 
 def get_email_headers(email_file):
     """
-    Extracts email headers from a given email file.
+    Extract headers from an email file-like object opened in binary mode.
 
     Args:
-        email_file (str): The path to the email file.
-    Returns:
-        dict: A dictionary containing the email headers.
-    """
-    with open(email_file, 'r') as f:
-        msg = email.message_from_file(f)
+        email_file: File-like object containing the raw email bytes.
 
-    headers = {}
-    for header in msg.keys():
-        headers[header] = msg[header]
-    print(headers)
-    return headers
+    Returns:
+        dict: A dictionary containing all parsed headers.
+    """
+    msg = BytesParser(policy=policy.default).parse(email_file)
+    return dict(msg.items())
