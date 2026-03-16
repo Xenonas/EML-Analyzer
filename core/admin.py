@@ -14,12 +14,12 @@ class UploadedSampleAdmin(admin.ModelAdmin):
 
 @admin.register(AnalysisResult)
 class AnalysisResultAdmin(admin.ModelAdmin):
-codex/find-current-header-calculation-method-kvs4vw
     list_display = (
         "id",
         "sample",
         "header_subject",
         "header_from",
+        "received_hops",
         "verdict",
         "completed_at",
     )
@@ -32,10 +32,5 @@ codex/find-current-header-calculation-method-kvs4vw
         "header_to",
         "summary",
     )
-=======
-    list_display = ("id", "sample", "verdict", "completed_at")
-    list_filter = ("verdict", "completed_at")
-    search_fields = ("sample__original_name", "sample__sha256", "summary")
-main
     readonly_fields = ("completed_at",)
     ordering = ("-completed_at",)
