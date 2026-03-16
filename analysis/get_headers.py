@@ -4,13 +4,14 @@ from email.parser import BytesParser
 
 def get_email_headers(email_file):
     """
-    Extract headers from an email file-like object opened in binary mode.
-
-    Args:
-        email_file: File-like object containing the raw email bytes.
+    Extract useful headers from an email file-like object opened in binary mode.
 
     Returns:
-        dict: A dictionary containing all parsed headers.
+        dict: Header mapping where repeated headers (e.g., Received) are returned as lists.
     """
     msg = BytesParser(policy=policy.default).parse(email_file)
-    return dict(msg.items())
+
+    headers = {name: msg.get(name, "") for name in msg.keys()}
+    headers["Received"] = msg.get_all("Received", [])
+
+    return headers

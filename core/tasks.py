@@ -1,41 +1,10 @@
 from celery import shared_task
-from django.http import JsonResponse
 from django.utils import timezone
-
-from django.shortcuts import get_object_or_404
 
 from analysis.get_headers import get_email_headers
 
 from .models import AnalysisResult, UploadedSample
 
-
-def sample_status(request, sample_id: int):
-    sample = get_object_or_404(UploadedSample, id=sample_id)
-
-    data = {
-        "id": sample.id,
-        "original_name": sample.original_name,
-        "sha256": sample.sha256,
-        "status": sample.status,
-        "created_at": sample.created_at.isoformat(),
-    }
-
-    if hasattr(sample, "analysisresult"):
-        result = sample.analysisresult
-        data["analysis"] = {
-            "subject": result.header_subject,
-            "from": result.header_from,
-            "to": result.header_to,
-            "date": result.header_date,
-            "message_id": result.header_message_id,
-            "summary": result.summary,
-            "verdict": result.verdict,
-            "completed_at": result.completed_at.isoformat() if result.completed_at else None,
-        }
-    else:
-        data["analysis"] = None
-
-    return JsonResponse(data)
 
 @shared_task
 def analyze_uploaded_sample(sample_id: int) -> None:
@@ -50,15 +19,15 @@ def analyze_uploaded_sample(sample_id: int) -> None:
         subject = headers.get("Subject", "")
         sender = headers.get("From", "")
         recipient = headers.get("To", "")
+        received_path = headers.get("Received", [])
 
         summary = (
-            f"Parsed email successfully. "
+            "Parsed email successfully. "
             f"From: {sender or 'N/A'} | "
             f"To: {recipient or 'N/A'} | "
-            f"Subject: {subject or 'N/A'}"
+            f"Subject: {subject or 'N/A'} | "
+            f"Hops: {len(received_path)}"
         )
-
-        verdict = "parsed"
 
         AnalysisResult.objects.update_or_create(
             sample=sample,
@@ -68,8 +37,16 @@ def analyze_uploaded_sample(sample_id: int) -> None:
                 "header_to": recipient,
                 "header_date": headers.get("Date", ""),
                 "header_message_id": headers.get("Message-ID", ""),
+                "header_reply_to": headers.get("Reply-To", ""),
+                "header_return_path": headers.get("Return-Path", ""),
+                "header_user_agent": headers.get("User-Agent", "") or headers.get("X-Mailer", ""),
+                "header_authentication_results": headers.get("Authentication-Results", ""),
+                "header_spf": headers.get("Received-SPF", "") or headers.get("X-SPF", ""),
+                "header_dkim_signature": headers.get("DKIM-Signature", ""),
+                "received_hops": len(received_path),
+                "received_path": received_path,
                 "summary": summary,
-                "verdict": verdict,
+                "verdict": "parsed",
                 "completed_at": timezone.now(),
             },
         )
