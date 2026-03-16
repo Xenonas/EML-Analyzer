@@ -6,6 +6,21 @@ from analysis.get_headers import get_email_headers
 from .models import AnalysisResult, UploadedSample
 
 
+def _get_first(headers: dict, *names: str) -> str:
+    for name in names:
+        values = headers.get(name.lower(), [])
+        if values:
+            return values[0]
+    return ""
+
+
+def _get_joined(headers: dict, *names: str) -> str:
+    parts = []
+    for name in names:
+        parts.extend(headers.get(name.lower(), []))
+    return "\n".join(part for part in parts if part)
+
+
 @shared_task
 def analyze_uploaded_sample(sample_id: int) -> None:
     sample = UploadedSample.objects.get(id=sample_id)
@@ -16,10 +31,10 @@ def analyze_uploaded_sample(sample_id: int) -> None:
         with sample.file.open("rb") as f:
             headers = get_email_headers(f)
 
-        subject = headers.get("Subject", "")
-        sender = headers.get("From", "")
-        recipient = headers.get("To", "")
-        received_path = headers.get("Received", [])
+        subject = _get_first(headers, "subject")
+        sender = _get_first(headers, "from")
+        recipient = _get_first(headers, "to")
+        received_path = headers.get("received", [])
 
         summary = (
             "Parsed email successfully. "
@@ -35,14 +50,14 @@ def analyze_uploaded_sample(sample_id: int) -> None:
                 "header_subject": subject,
                 "header_from": sender,
                 "header_to": recipient,
-                "header_date": headers.get("Date", ""),
-                "header_message_id": headers.get("Message-ID", ""),
-                "header_reply_to": headers.get("Reply-To", ""),
-                "header_return_path": headers.get("Return-Path", ""),
-                "header_user_agent": headers.get("User-Agent", "") or headers.get("X-Mailer", ""),
-                "header_authentication_results": headers.get("Authentication-Results", ""),
-                "header_spf": headers.get("Received-SPF", "") or headers.get("X-SPF", ""),
-                "header_dkim_signature": headers.get("DKIM-Signature", ""),
+                "header_date": _get_first(headers, "date"),
+                "header_message_id": _get_first(headers, "message-id"),
+                "header_reply_to": _get_first(headers, "reply-to"),
+                "header_return_path": _get_first(headers, "return-path"),
+                "header_user_agent": _get_first(headers, "user-agent", "x-mailer"),
+                "header_authentication_results": _get_joined(headers, "authentication-results"),
+                "header_spf": _get_joined(headers, "received-spf", "x-spf"),
+                "header_dkim_signature": _get_joined(headers, "dkim-signature"),
                 "received_hops": len(received_path),
                 "received_path": received_path,
                 "summary": summary,
