@@ -19,6 +19,7 @@ class AnalysisResultAdmin(admin.ModelAdmin):
         "sample",
         "header_subject",
         "header_from",
+        "received_hops",
         "verdict",
         "completed_at",
     )
