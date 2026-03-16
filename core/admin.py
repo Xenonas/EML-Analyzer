@@ -32,8 +32,5 @@ class AnalysisResultAdmin(admin.ModelAdmin):
         "header_to",
         "summary",
     )
-    list_display = ("id", "sample", "verdict", "completed_at")
-    list_filter = ("verdict", "completed_at")
-    search_fields = ("sample__original_name", "sample__sha256", "summary")
     readonly_fields = ("completed_at",)
     ordering = ("-completed_at",)
