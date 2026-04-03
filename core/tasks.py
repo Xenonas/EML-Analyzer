@@ -11,8 +11,10 @@ from .models import AnalysisResult, UploadedSample
 def _get_first(headers: dict, *names: str) -> str:
     for name in names:
         values = headers.get(name.lower(), [])
-        if values:
-            return values[0]
+        for value in values:
+            cleaned = str(value).strip()
+            if cleaned:
+                return cleaned
     return ""
 
 
@@ -60,9 +62,14 @@ def analyze_uploaded_sample(sample_id: int) -> None:
                 "header_to": recipient,
                 "header_date": _get_first(headers, "date"),
                 "header_message_id": _get_first(headers, "message-id"),
-                "header_reply_to": _get_first(headers, "reply-to"),
+                "header_reply_to": _get_first(headers, "reply-to", "in-reply-to"),
                 "header_return_path": _get_first(headers, "return-path"),
-                "header_user_agent": _get_first(headers, "user-agent", "x-mailer"),
+                "header_user_agent": _get_first(
+                    headers,
+                    "user-agent",
+                    "x-user-agent",
+                    "x-mailer",
+                ),
                 "header_authentication_results": auth_results,
                 "header_spf": _get_joined(headers, "received-spf", "x-spf")
                 or _extract_auth_result(auth_results, "spf"),
