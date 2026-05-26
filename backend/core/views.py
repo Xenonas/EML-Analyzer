@@ -1,19 +1,26 @@
-# core/views.py
-
-from rest_framework.views import APIView
-from rest_framework.response import Response
-from rest_framework import status
-from .serializers import UploadedFileSerializer
-from analysis.utils import get_sha256
-
 import hashlib
+
 from django.http import JsonResponse
+from django.shortcuts import get_object_or_404
 from django.views.decorators.csrf import csrf_exempt
+
+from .authentication import extract_authentication_statuses
+from .lookup import lookup_indicator
+from .models import UploadedSample
 from .tasks import analyze_uploaded_sample
 
-from django.shortcuts import get_object_or_404
 
-from .models import UploadedSample
+def indicator_lookup(request):
+    if request.method != "GET":
+        return JsonResponse({"error": "Only GET allowed"}, status=405)
+
+    query = request.GET.get("q", "")
+    if len(query) > 512:
+        return JsonResponse({"error": "Lookup value is too long."}, status=400)
+
+    result = lookup_indicator(query)
+    status = 400 if result.get("error") else 200
+    return JsonResponse(result, status=status)
 
 
 def sample_status(request, sample_id: int):
@@ -38,9 +45,22 @@ def sample_status(request, sample_id: int):
             "reply_to": result.header_reply_to,
             "return_path": result.header_return_path,
             "user_agent": result.header_user_agent,
+            "body": result.body_text,
+            "attachments": result.attachments,
+            "urls": result.urls,
+            "risk": result.risk_assessment,
             "authentication_results": result.header_authentication_results,
             "spf": result.header_spf,
             "dkim_signature": result.header_dkim_signature,
+            "authentication": result.authentication_verification
+            or extract_authentication_statuses(
+                result.header_authentication_results,
+                result.header_spf,
+            ),
+            "reported_authentication": extract_authentication_statuses(
+                result.header_authentication_results,
+                result.header_spf,
+            ),
             "hops": result.received_hops,
             "received_path": result.received_path,
             "summary": result.summary,
@@ -86,22 +106,3 @@ def upload_sample(request):
         },
         status=201,
     )
-
-
-class FileUploadAPI(APIView):
-
-    def post(self, request):
-
-        data = request.data.copy()
-        data["original_name"] = request.FILES["file"].name
-        data["status"] = "pending"
-        data["sha256"] = get_sha256(request.FILES["file"])
-        serializer = UploadedFileSerializer(data=data)
-
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data)
-        
-
-
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)

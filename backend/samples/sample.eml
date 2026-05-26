@@ -1,0 +1,34 @@
+Return-Path: <sender@example.com>
+Received: from mail.example.com (mail.example.com [203.0.113.10])
+    by mx.receiver.test with ESMTPS id ABC123
+    for <receiver@example.net>; Tue, 26 May 2026 09:15:00 +0000
+Received: from laptop.local (unknown [198.51.100.25])
+    by mail.example.com with ESMTPSA id DEF456;
+    Tue, 26 May 2026 09:14:32 +0000
+Authentication-Results: mx.receiver.test;
+    spf=pass smtp.mailfrom=example.com;
+    dkim=pass header.d=example.com;
+    dmarc=pass header.from=example.com
+Received-SPF: pass (mx.receiver.test: domain of example.com designates 203.0.113.10 as permitted sender)
+DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed; d=example.com; s=mail;
+    h=from:to:subject:date:message-id;
+    bh=dummy-body-hash;
+    b=dummy-signature
+From: Sender Example <sender@example.com>
+To: Receiver Example <receiver@example.net>
+Reply-To: Sender Support <support@example.com>
+Subject: Sample EML for Analyzer
+Date: Tue, 26 May 2026 09:14:30 +0000
+Message-ID: <sample-20260526@example.com>
+User-Agent: Example Mail Client 1.0
+MIME-Version: 1.0
+Content-Type: text/plain; charset="UTF-8"
+Content-Transfer-Encoding: 7bit
+
+Hello,
+
+This is a safe sample email file for testing the EML Analyzer upload and
+header parsing flow.
+
+Regards,
+Sender Example

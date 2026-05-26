@@ -1,11 +1,15 @@
+from io import BytesIO
 import re
 
 from celery import shared_task
 from django.utils import timezone
 
-from analysis.get_headers import get_email_headers
+from analysis.get_headers import get_email_headers_body_attachments_and_urls
 
+from .email_authentication import verify_email_authentication
 from .models import AnalysisResult, UploadedSample
+from .risk_scoring import score_risk
+from .url_analysis import analyze_urls
 
 
 def _get_first(headers: dict, *names: str) -> str:
@@ -38,20 +42,35 @@ def analyze_uploaded_sample(sample_id: int) -> None:
 
     try:
         with sample.file.open("rb") as f:
-            headers = get_email_headers(f)
+            raw_email = f.read()
+
+        headers, body_text, attachments, extracted_urls = get_email_headers_body_attachments_and_urls(
+            BytesIO(raw_email)
+        )
+        authentication_verification = verify_email_authentication(raw_email, headers)
+        urls = analyze_urls(extracted_urls)
 
         subject = _get_first(headers, "subject")
         sender = _get_first(headers, "from")
         recipient = _get_first(headers, "to")
         received_path = headers.get("received", [])
         auth_results = _get_joined(headers, "authentication-results")
+        risk_assessment = score_risk(
+            authentication=authentication_verification,
+            attachments=attachments,
+            urls=urls,
+            sender=sender,
+            return_path=_get_first(headers, "return-path"),
+            received_path=received_path,
+        )
 
         summary = (
             "Parsed email successfully. "
             f"From: {sender or 'N/A'} | "
             f"To: {recipient or 'N/A'} | "
             f"Subject: {subject or 'N/A'} | "
-            f"Hops: {len(received_path)}"
+            f"Hops: {len(received_path)} | "
+            f"Risk: {risk_assessment['severity']} ({risk_assessment['score']}/100)"
         )
 
         AnalysisResult.objects.update_or_create(
@@ -75,10 +94,15 @@ def analyze_uploaded_sample(sample_id: int) -> None:
                 or _extract_auth_result(auth_results, "spf"),
                 "header_dkim_signature": _get_joined(headers, "dkim-signature")
                 or _extract_auth_result(auth_results, "dkim"),
+                "body_text": body_text,
+                "authentication_verification": authentication_verification,
+                "attachments": attachments,
+                "urls": urls,
+                "risk_assessment": risk_assessment,
                 "received_hops": len(received_path),
                 "received_path": received_path,
                 "summary": summary,
-                "verdict": "parsed",
+                "verdict": risk_assessment["severity"],
                 "completed_at": timezone.now(),
             },
         )
