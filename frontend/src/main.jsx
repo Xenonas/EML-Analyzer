@@ -61,6 +61,7 @@ function App() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [emailPreviewOpen, setEmailPreviewOpen] = useState(true);
+  const [uploadCollapsed, setUploadCollapsed] = useState(false);
   const [lookup, setLookup] = useState({ loading: false, result: null, error: "" });
 
   const analysis = status?.analysis || null;
@@ -115,6 +116,7 @@ function App() {
       }
 
       setSample(data);
+      setUploadCollapsed(true);
       await fetchStatus(data.id, { silent: true });
     } catch (err) {
       setError(err.message);
@@ -171,6 +173,7 @@ function App() {
     setSample(null);
     setStatus(null);
     setError("");
+    setUploadCollapsed(false);
     setLookup({ loading: false, result: null, error: "" });
   }
 
@@ -203,34 +206,78 @@ function App() {
       </header>
 
       <section className="dashboard">
-        <aside className="sidebar panel">
-          {!sample ? (
-            <form onSubmit={uploadSample} className="upload-form">
-              <label className={file ? "drop-zone has-file" : "drop-zone"}>
-                <input
-                  type="file"
-                  accept=".eml,message/rfc822"
-                  onChange={(event) => setFile(event.target.files[0] || null)}
-                />
-                <UploadCloud size={34} />
-                <span>{file ? file.name : "Select EML file"}</span>
-                <small>{file ? formatBytes(file.size) : "message/rfc822 or .eml"}</small>
-              </label>
-
-              <button className="primary-button" type="submit" disabled={busy}>
-                <UploadCloud size={18} />
-                <span>{busy ? "Processing" : "Analyze"}</span>
-              </button>
-            </form>
-          ) : (
-            <div className="upload-suppressed">
-              <MailCheck size={26} />
-              <div>
-                <strong>Sample uploaded</strong>
-                <span>{sample.original_name}</span>
+        <section className={sample && uploadCollapsed ? "panel upload-panel collapsed" : "panel upload-panel"}>
+          {sample && uploadCollapsed ? (
+            <div className="upload-collapsed">
+              <div className="upload-collapsed-summary">
+                <MailCheck size={24} />
+                <div>
+                  <strong>{sample.original_name}</strong>
+                  <span>{sample?.id ? `Sample #${sample.id}` : "Sample uploaded"}</span>
+                </div>
               </div>
-              <button type="button" onClick={resetUpload}>Analyze another</button>
+              <div className="upload-collapsed-actions">
+                <button
+                  className="icon-button"
+                  type="button"
+                  onClick={() => setUploadCollapsed(false)}
+                  aria-label="Expand upload panel"
+                  title="Expand upload panel"
+                >
+                  <ChevronDown size={18} />
+                </button>
+                <button type="button" onClick={resetUpload}>Analyze another</button>
+              </div>
             </div>
+          ) : (
+            <>
+              {!sample ? (
+                <form onSubmit={uploadSample} className="upload-form">
+                  <label className={file ? "drop-zone has-file" : "drop-zone"}>
+                    <input
+                      type="file"
+                      accept=".eml,message/rfc822"
+                      onChange={(event) => setFile(event.target.files[0] || null)}
+                    />
+                    <UploadCloud size={34} />
+                    <span>{file ? file.name : "Select EML file"}</span>
+                    <small>{file ? formatBytes(file.size) : "message/rfc822 or .eml"}</small>
+                  </label>
+
+                  <button className="primary-button" type="submit" disabled={busy}>
+                    <UploadCloud size={18} />
+                    <span>{busy ? "Processing" : "Analyze"}</span>
+                  </button>
+                </form>
+              ) : (
+                <div className="upload-suppressed">
+                  <MailCheck size={26} />
+                  <div>
+                    <strong>Sample uploaded</strong>
+                    <span>{sample.original_name}</span>
+                  </div>
+                  <div className="upload-suppressed-actions">
+                    <button type="button" onClick={() => setUploadCollapsed(true)}>
+                      <ChevronUp size={16} />
+                      <span>Collapse</span>
+                    </button>
+                    <button type="button" onClick={resetUpload}>Analyze another</button>
+                  </div>
+                </div>
+              )}
+
+              {hasSampleContext && (
+                <div className="upload-sample-section">
+                  <h2>Sample</h2>
+                  <dl className="sample-list">
+                    <Meta icon={FileText} label="Name" value={sample?.original_name || file?.name || "No file selected"} />
+                    <Meta icon={Inbox} label="Sample ID" value={sample?.id ? `#${sample.id}` : "Pending"} />
+                    <Meta icon={Fingerprint} label="SHA-256" value={sample?.sha256 || "Unavailable"} mono />
+                    <Meta icon={Clock3} label="Created" value={status?.created_at ? formatDate(status.created_at) : "Pending"} />
+                  </dl>
+                </div>
+              )}
+            </>
           )}
 
           {error && (
@@ -239,19 +286,7 @@ function App() {
               <span>{error}</span>
             </div>
           )}
-
-          {hasSampleContext && (
-            <div className="sidebar-section">
-              <h2>Sample</h2>
-              <dl className="sample-list">
-                <Meta icon={FileText} label="Name" value={sample?.original_name || file?.name || "No file selected"} />
-                <Meta icon={Inbox} label="Sample ID" value={sample?.id ? `#${sample.id}` : "Pending"} />
-                <Meta icon={Fingerprint} label="SHA-256" value={sample?.sha256 || "Unavailable"} mono />
-                <Meta icon={Clock3} label="Created" value={status?.created_at ? formatDate(status.created_at) : "Pending"} />
-              </dl>
-            </div>
-          )}
-        </aside>
+        </section>
 
         <section className="content">
           {!hasAnalysisContext ? (
@@ -392,6 +427,9 @@ function App() {
                                 <span>{item.risk}</span>
                               </div>
                               <p>{item.url}</p>
+                              <button className="lookup-link" type="button" onClick={() => lookupValue(item.url)}>
+                                Check in lookup
+                              </button>
                               <dl>
                                 <LookupDatum label="Resolved IPs" value={item.resolved_ips?.join(", ")} />
                                 <LookupDatum label="Final URL" value={item.final_url} />
@@ -613,6 +651,8 @@ function LookupResult({ loading, result, error }) {
 
   if (!result) return null;
 
+  const owner = result.rdap?.owner || result.rdap?.name || result.virustotal?.as_owner;
+
   return (
     <div className="lookup-result">
       <div className="lookup-result-heading">
@@ -622,11 +662,12 @@ function LookupResult({ loading, result, error }) {
       <dl className="lookup-grid">
         <LookupDatum label="Domain" value={result.domain} />
         <LookupDatum label="IP Addresses" value={result.ip_addresses?.join(", ")} />
-        <LookupDatum label="Owner / Name" value={result.rdap?.name} />
+        <LookupDatum label="Owner / Name" value={owner} />
         <LookupDatum label="Registrar" value={result.rdap?.registrar} />
         <LookupDatum label="Handle" value={result.rdap?.handle} />
-        <LookupDatum label="Country" value={result.rdap?.country} />
+        <LookupDatum label="Country" value={result.rdap?.country || result.virustotal?.country} />
       </dl>
+      <VirusTotalResult result={result.virustotal} />
       {result.rdap?.entities?.length > 0 && (
         <div className="lookup-entities">
           <dt>RDAP Entities</dt>
@@ -637,6 +678,42 @@ function LookupResult({ loading, result, error }) {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function VirusTotalResult({ result }) {
+  if (!result) return null;
+
+  if (!result.available) {
+    return (
+      <div className="vt-result unavailable">
+        <dt>VirusTotal</dt>
+        <dd>{result.error || result.reason || "Unavailable"}</dd>
+      </div>
+    );
+  }
+
+  return (
+    <div className={result.malicious || result.suspicious ? "vt-result flagged" : "vt-result"}>
+      <div className="vt-heading">
+        <dt>VirusTotal</dt>
+        {result.gui_url && (
+          <a href={result.gui_url} target="_blank" rel="noreferrer">
+            Open report
+          </a>
+        )}
+      </div>
+      <dl className="lookup-grid vt-grid">
+        <LookupDatum label="Malicious" value={String(result.malicious ?? 0)} />
+        <LookupDatum label="Suspicious" value={String(result.suspicious ?? 0)} />
+        <LookupDatum label="Harmless" value={String(result.harmless ?? 0)} />
+        <LookupDatum label="Undetected" value={String(result.undetected ?? 0)} />
+        <LookupDatum label="Reputation" value={String(result.reputation ?? "N/A")} />
+        <LookupDatum label="ASN / Owner" value={[result.asn, result.as_owner].filter(Boolean).join(" ")} />
+        <LookupDatum label="Country" value={result.country} />
+        <LookupDatum label="Categories" value={result.categories?.join(", ")} />
+      </dl>
     </div>
   );
 }

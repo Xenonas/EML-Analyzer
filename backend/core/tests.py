@@ -1,13 +1,19 @@
-from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import TestCase
+import json
+import os
+from pathlib import Path
+import tempfile
 from unittest.mock import patch
 
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import TestCase
+
 from analysis.utils import get_sha256
+from config.settings import load_env_file
 
 from .authentication import extract_authentication_statuses
 from .email_authentication import verify_email_authentication
 from .forms import UploadFileForm
-from .lookup import lookup_indicator
+from .lookup import _fetch_rdap, _virustotal_url_id, lookup_indicator
 from .models import UploadedSample
 from .risk_scoring import score_risk
 from .tasks import analyze_uploaded_sample
@@ -210,17 +216,133 @@ class IndependentAuthenticationTests(TestCase):
         self.assertEqual(result["spf"]["result"], "unknown")
         self.assertEqual(result["spf"]["source"], "Independent SPF")
 
+    @patch("core.email_authentication._fetch_dmarc_record", return_value="v=DMARC1; p=reject")
+    @patch("core.email_authentication.dkim.verify", return_value=False)
+    @patch("core.email_authentication.spf.check2", return_value=("fail", "sender SPF unauthorized"))
+    def test_prefers_receiver_reported_authentication_results(self, _spf, _dkim, _dmarc):
+        raw_email = (
+            b"Return-Path: <sender@example.com>\r\n"
+            b"Received: from mail.example.com (mail.example.com [203.0.113.25]) by mx.test\r\n"
+            b"Authentication-Results: mx.test; spf=pass smtp.mailfrom=example.com; "
+            b"dkim=pass header.d=example.com; dmarc=pass header.from=example.com\r\n"
+            b"DKIM-Signature: v=1; a=rsa-sha256; d=example.com; s=mail; bh=x; b=y\r\n"
+            b"From: Sender <sender@example.com>\r\n"
+            b"\r\n"
+            b"Body"
+        )
+        headers = {
+            "return-path": ["<sender@example.com>"],
+            "received": ["from mail.example.com (mail.example.com [203.0.113.25]) by mx.test"],
+            "authentication-results": [
+                "mx.test; spf=pass smtp.mailfrom=example.com; "
+                "dkim=pass header.d=example.com; dmarc=pass header.from=example.com"
+            ],
+            "dkim-signature": ["v=1; a=rsa-sha256; d=example.com; s=mail; bh=x; b=y"],
+            "from": ["Sender <sender@example.com>"],
+        }
+
+        result = verify_email_authentication(raw_email, headers)
+
+        self.assertEqual(result["spf"]["result"], "pass")
+        self.assertEqual(result["dkim"]["result"], "pass")
+        self.assertEqual(result["dmarc"]["result"], "pass")
+        self.assertEqual(result["spf"]["source"], "Authentication-Results")
+        self.assertEqual(result["spf"]["metadata"]["independent"]["result"], "fail")
+
+    @patch("core.email_authentication._fetch_dmarc_record", return_value="v=DMARC1; p=reject")
+    def test_dmarc_unknown_when_local_authentication_is_inconclusive(self, _dmarc):
+        result = verify_email_authentication(
+            b"From: Sender <sender@example.com>\r\n\r\nBody",
+            {"from": ["Sender <sender@example.com>"]},
+        )
+
+        self.assertEqual(result["spf"]["result"], "unknown")
+        self.assertEqual(result["dkim"]["result"], "unknown")
+        self.assertEqual(result["dmarc"]["result"], "unknown")
+
 
 class LookupTests(TestCase):
+    @patch("core.lookup._fetch_virustotal", return_value={"available": False})
     @patch("core.lookup._fetch_rdap", return_value={})
     @patch("core.lookup._resolve_domain", return_value=["93.184.216.34"])
-    def test_normalizes_email_lookup_to_domain(self, _resolve_domain, _fetch_rdap):
+    def test_normalizes_email_lookup_to_domain(self, _resolve_domain, _fetch_rdap, _fetch_virustotal):
         result = lookup_indicator("Sender Example <sender@example.com>")
 
         self.assertEqual(result["type"], "email")
         self.assertEqual(result["normalized"], "sender@example.com")
         self.assertEqual(result["domain"], "example.com")
         self.assertEqual(result["ip_addresses"], ["93.184.216.34"])
+        _fetch_virustotal.assert_called_once_with("email", "sender@example.com", "example.com", "")
+
+    @patch("core.lookup._fetch_virustotal", return_value={"available": True, "malicious": 2})
+    @patch("core.lookup._fetch_rdap", return_value={})
+    @patch("core.lookup._resolve_domain", return_value=["93.184.216.34"])
+    def test_normalizes_url_lookup_for_virustotal(self, _resolve_domain, _fetch_rdap, _fetch_virustotal):
+        result = lookup_indicator("https://example.com/login")
+
+        self.assertEqual(result["type"], "url")
+        self.assertEqual(result["domain"], "example.com")
+        self.assertEqual(result["virustotal"]["malicious"], 2)
+        _fetch_virustotal.assert_called_once_with("url", "https://example.com/login", "example.com", "")
+
+    def test_virustotal_url_identifier_is_unpadded_urlsafe_base64(self):
+        self.assertEqual(_virustotal_url_id("https://example.com/"), "aHR0cHM6Ly9leGFtcGxlLmNvbS8")
+
+    @patch(
+        "core.lookup.urlopen",
+        return_value=type(
+            "Response",
+            (),
+            {
+                "__enter__": lambda self: self,
+                "__exit__": lambda self, *args: None,
+                "read": lambda self: json.dumps(
+                    {
+                        "handle": "NET-203-0-113-0-1",
+                        "entities": [
+                            {
+                                "roles": ["technical"],
+                                "vcardArray": [
+                                    "vcard",
+                                    [["fn", {}, "text", "Network Operations"]],
+                                ],
+                                "entities": [
+                                    {
+                                        "roles": ["registrant"],
+                                        "vcardArray": [
+                                            "vcard",
+                                            [["org", {}, "text", "Example Network Owner"]],
+                                        ],
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ).encode("utf-8"),
+            },
+        )(),
+    )
+    def test_rdap_owner_uses_nested_registrant_entity(self, _urlopen):
+        result = _fetch_rdap("ip", "203.0.113.1")
+
+        self.assertEqual(result["owner"], "Example Network Owner")
+        self.assertEqual(result["name"], "")
+        self.assertIn(
+            {"roles": ["registrant"], "name": "Example Network Owner"},
+            result["entities"],
+        )
+
+    def test_load_env_file_sets_missing_values_without_overriding_existing_environment(self):
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8") as env_file:
+            env_file.write("VT_KEY=from-file\nEXISTING_KEY=from-file\n")
+            env_file.flush()
+
+            with patch.dict(os.environ, {"EXISTING_KEY": "from-env"}, clear=False):
+                os.environ.pop("VT_KEY", None)
+                load_env_file(Path(env_file.name))
+
+                self.assertEqual(os.environ["VT_KEY"], "from-file")
+                self.assertEqual(os.environ["EXISTING_KEY"], "from-env")
 
 
 class UrlAnalysisTests(TestCase):

@@ -8,6 +8,8 @@ import dns.resolver
 import spf
 from publicsuffix2 import get_sld
 
+from .authentication import extract_authentication_statuses
+
 
 def verify_email_authentication(raw_email: bytes, headers: dict) -> dict:
     context = _build_context(headers)
@@ -15,10 +17,19 @@ def verify_email_authentication(raw_email: bytes, headers: dict) -> dict:
     dkim_status = _verify_dkim(raw_email, headers)
     dmarc_status = _verify_dmarc(context, spf_status, dkim_status)
 
-    return {
+    independent = {
         "spf": spf_status,
         "dkim": dkim_status,
         "dmarc": dmarc_status,
+    }
+    reported = extract_authentication_statuses(
+        _get_joined(headers, "authentication-results"),
+        _get_joined(headers, "received-spf", "x-spf"),
+    )
+
+    return {
+        mechanism: _prefer_reported_status(reported[mechanism], independent[mechanism])
+        for mechanism in ("spf", "dkim", "dmarc")
     }
 
 
@@ -142,6 +153,23 @@ def _verify_dmarc(context: dict, spf_status: dict, dkim_status: dict) -> dict:
         _domains_align(domain, from_domain, tags.get("adkim", "r"))
         for domain in dkim_status.get("metadata", {}).get("signing_domains", [])
     )
+    spf_conclusive = spf_status["result"] in {"pass", "fail", "softfail", "neutral"}
+    dkim_conclusive = dkim_status["result"] in {"pass", "fail"}
+    if not spf_aligned and not dkim_aligned and not (spf_conclusive or dkim_conclusive):
+        return _status(
+            "DMARC",
+            "unknown",
+            "Independent DMARC",
+            "Cannot determine DMARC alignment because SPF and DKIM did not produce conclusive local results.",
+            {
+                "from_domain": from_domain,
+                "record": record,
+                "policy": tags.get("p", ""),
+                "spf_aligned": spf_aligned,
+                "dkim_aligned": dkim_aligned,
+            },
+        )
+
     result = "pass" if spf_aligned or dkim_aligned else "fail"
 
     return _status(
@@ -177,6 +205,33 @@ def _get_first(headers: dict, *names: str) -> str:
             if cleaned:
                 return cleaned
     return ""
+
+
+def _get_joined(headers: dict, *names: str) -> str:
+    parts = []
+    for name in names:
+        parts.extend(headers.get(name.lower(), []))
+    return "\n".join(str(part).strip() for part in parts if str(part).strip())
+
+
+def _prefer_reported_status(reported_status: dict, independent_status: dict) -> dict:
+    if reported_status.get("source") == "Not found":
+        return independent_status
+
+    source = reported_status.get("source", "Authentication-Results")
+    details = reported_status.get("details", "")
+    if not details:
+        details = f"Receiver-reported {reported_status['name']} result from {source}."
+
+    return {
+        **reported_status,
+        "source": source,
+        "details": details,
+        "metadata": {
+            "reported_result": reported_status.get("result", "unknown"),
+            "independent": independent_status,
+        },
+    }
 
 
 def _domain_from_email(value: str) -> str:
